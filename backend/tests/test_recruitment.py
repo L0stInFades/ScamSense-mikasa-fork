@@ -85,3 +85,55 @@ def test_usage_question_and_actual_disclosure_have_separate_sources():
     assert all(d["clue"] == "K02" for d in report["disclosures"])
     disclosed = {d["message_id"] for d in report["disclosures"]}
     assert after["reply_id"] in disclosed and early["reply_id"] not in disclosed
+
+
+def test_clarify_job_interest_and_field_consent(client):
+    created = start(client).json()
+    path = "/api/v1/sessions/" + created["session"]["id"]
+    auth = {"Authorization": "Bearer " + created["session_token"]}
+
+    def ask(text):
+        version = client.get(path, headers=auth).json()["state_version"]
+        headers = {**auth, "Idempotency-Key": str(uuid4())}
+        body = {"expected_version": version, "role_id": "chen_hao", "content": text}
+        response = client.post(path + "/messages", headers=headers, json=body)
+        assert response.status_code == 200
+        assert client.post(path + "/messages", headers=headers, json=body).text == response.text
+        with main.engine.connect() as conn:
+            return conn.execute(sa.select(sessions.c.state)).scalar_one()
+
+    ambiguous = ask("我想申请这个岗位，但我不想申请这个岗位。")
+    assert ambiguous["stage"] == "S0" and "registration" not in ambiguous
+    assert [e["name"] for e in ambiguous["events"]] == ["SESSION_CREATED"]
+    assert "先了解一下" in ambiguous["chats"]["chen_hao"][-1]["content"]
+    assert ask("我想申请")["stage"] == "S2"
+    assert ask("我不同意交简历。")["registration"]["answers"] == {"简历": "拒绝"}
+    disputed = ask("姓名：甲，简历可以交，但简历不交。")
+    assert disputed["registration"]["answers"] == {"简历": "拒绝", "姓名": "已提供"}
+    assert disputed["events"][-1]["fields"] == {"姓名": "已提供"}
+    assert "关于简历" in disputed["chats"]["chen_hao"][-1]["content"]
+    assert ask("暂缓。")["registration"]["answers"]["简历"] == "暂缓"
+    still_active = ask("我不想继续了。")
+    assert (still_active["status"], still_active["stage"]) == ("active", "S2")
+    assert "暂停训练" in still_active["chats"]["chen_hao"][-1]["content"]
+    assert not any(e["name"] == "USER_MAKES_DECISION" for e in still_active["events"])
+
+
+def test_interest_with_explicit_hold_does_not_start_registration():
+    for hold in ("我不想申请这个岗位", "先别收资料"):
+        state = opening_state(str(uuid4()), "local-demo-v1")
+        take_turn(state, "chen_hao", "我对这个岗位感兴趣，但" + hold + "。")
+        assert state["stage"] == "S0" and "registration" not in state
+        assert [e["name"] for e in state["events"]] == ["SESSION_CREATED", "USER_EXPRESSES_INTEREST"]
+
+
+def test_hypothetical_or_unconfirmed_field_reply_does_not_grant_consent():
+    state = opening_state(str(uuid4()), "local-demo-v1")
+    take_turn(state, "chen_hao", "我对这个岗位感兴趣")
+    for text in ("简历可以交吗", "我没同意提供简历", "如果是官方登记，我可以交简历。"):
+        take_turn(state, "chen_hao", text)
+        assert not state["registration"]["answers"]
+        assert not any(e["name"] == "USER_RESPONDS_TO_INFO_REQUEST" for e in state["events"])
+    assert "关于简历" in state["chats"]["chen_hao"][-1]["content"]
+    take_turn(state, "chen_hao", "拒绝")
+    assert state["registration"]["answers"] == {"简历": "拒绝"}

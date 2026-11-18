@@ -9,6 +9,8 @@ PRIVATE_DATA = re.compile(r"(?<!\d)(?:1[3-9]\d{9}|\d{15,19}[Xx]?)(?!\d)|[\w.+-]+
 
 def reply_to(role: str, text: str, history: list[dict], questions: str) -> Reply:
     question = text.strip().rstrip("。！？?!")
+    if question in {"不想继续了", "我不想继续了", "不想再继续了", "我不想再继续了"}:
+        return Reply("你想先停下这个话题，还是暂停训练？页面上的按钮可以暂停训练、确认招聘选择或提前结束。")
     if question in {"我上次问了什么", "我刚才问了什么"}:
         previous = next((m["content"] for m in reversed(history) if m["sender"] == "user"), None)
         return Reply(f"你上次在这里说的是「{previous}」。" if previous else "这是你在这段对话里问我的第一个问题。")
