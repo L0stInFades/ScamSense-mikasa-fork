@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { auth, request, type Credentials } from './api'
-const props = defineProps<{ credentials: Credentials; version: number; disabled: boolean; refresh: () => Promise<void> }>()
+import { computed, ref, watch } from 'vue'
+import { auth, request, type Credentials, type Message } from './api'
+const props = defineProps<{
+  credentials: Credentials; version: number; disabled: boolean; refresh: () => Promise<void>
+  role: string; messages: Message[]
+}>()
 const mode = ref<'end' | 'decisions' | ''>('')
 const choice = ref(''), reason = ref(''), busy = ref(false), error = ref('')
+const reasonId = ref('')
+const ownMessages = computed(() => props.messages.filter(m => m.sender === 'user' && m.role_id === props.role))
+const citedReason = computed(() => ownMessages.value.find(m => m.id === reasonId.value))
+watch(() => props.role, () => { reasonId.value = '' })
 let operation = '', previousBody = ''
 const options = {continue:'继续提交', necessary_only:'仅提交必要资料', verify_first:'先核实再决定', decline:'退出招聘流程'}
 
 async function confirm() {
   if (!mode.value || busy.value || props.disabled) return
-  const body = JSON.stringify({expected_version: props.version, ...(mode.value === 'decisions' ? {choice:choice.value,reason:reason.value} : {})})
+  const decision = mode.value === 'decisions'
+    ? {choice: choice.value, reason: reason.value, reason_message_id: citedReason.value?.id}
+    : {}
+  const body = JSON.stringify({expected_version: props.version, ...decision})
   if (body !== previousBody) { operation = crypto.randomUUID(); previousBody = body }
   busy.value = true; error.value = ''
   try {
@@ -32,6 +42,16 @@ async function confirm() {
         <select id="choice" v-model="choice" required>
           <option value="" disabled>请选择</option><option v-for="(label, key) in options" :key="key" :value="key">{{ label }}</option>
         </select>
+        <template v-if="ownMessages.length">
+          <label for="reason-source">引用自己在这段私聊里的发言作为理由（可选）</label>
+          <select id="reason-source" v-model="reasonId">
+            <option value="">不引用</option>
+            <option v-for="m in ownMessages" :key="m.id" :value="m.id">
+              {{ m.content.length > 50 ? m.content.slice(0, 50) + '…' : m.content }}
+            </option>
+          </select>
+          <blockquote v-if="citedReason">{{ citedReason.content }}</blockquote>
+        </template>
         <label for="reason">你的理由（可选）</label>
         <textarea id="reason" maxlength="2000" v-model="reason"></textarea>
       </template>

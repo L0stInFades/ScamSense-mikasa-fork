@@ -145,6 +145,7 @@ class EndInput(BaseModel):
 class DecisionInput(EndInput):
     choice: Literal["continue", "necessary_only", "verify_first", "decline"]
     reason: str = Field(default="", max_length=2000)
+    reason_message_id: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 def change_pause(command, body, key, row):
@@ -170,7 +171,8 @@ def resume_training(body: EndInput, key: RequestKey, row=Depends(authorized)):
 def decide(body: DecisionInput, key: RequestKey, row=Depends(authorized)):
     if PRIVATE_DATA.search(body.reason):
         raise HTTPException(422, "理由中请使用虚构资料。")
-    apply_action(engine, row, key, body, "decision", lambda s: close_chat(s, str(key), body.choice, body.reason))
+    apply_action(engine, row, key, body, "decision",
+                 lambda s: close_chat(s, str(key), body.choice, body.reason, body.reason_message_id))
     return complete_report(engine, row["id"])
 
 

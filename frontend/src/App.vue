@@ -173,7 +173,7 @@ watch(() => route.name, showCurrentPage)
         :role="selected" :version="session.state_version" :quote="quote" :refresh="refresh"
         @busy="talking = $event" @clear-quote="quote = undefined" />
       <FinishPanel v-if="saved && 'token' in saved" :credentials="saved" :version="session.state_version"
-        :disabled="talking || busy" :refresh="refresh" />
+        :role="selected" :messages="messages" :disabled="talking || busy" :refresh="refresh" />
       <p v-if="pauseError" role="alert">{{ pauseError }}</p>
       <button :disabled="talking || busy" @click="togglePause">暂停训练</button>
     </section>

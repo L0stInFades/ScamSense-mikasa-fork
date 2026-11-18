@@ -13,12 +13,19 @@ VERIFY = {"USER_ASKS_RECRUITMENT_IDENTITY", "USER_ASKS_DATA_USAGE",
 WEIGHTS = {"风险识别": 25, "主动核实": 30, "决策合理性": 25, "证据分析": 20}
 
 
-def close_chat(state: dict, operation: str, choice: str, reason: str) -> dict:
+def close_chat(state: dict, operation: str, choice: str, reason: str, reason_message_id: str | None = None) -> dict:
+    if reason_message_id:
+        user_message = any(m["id"] == reason_message_id and m["sender"] == "user"
+                           for chat in state["chats"].values() for m in chat)
+        if choice == "undecided" or not user_message:
+            raise HTTPException(422, "只能引用本次训练中自己发送的消息作为决定理由。")
     state.update(stage="S5", status="evaluating")
     state["decision"] = {
         "operation": operation, "choice": choice, "reason": reason,
         "confirmed_at": datetime.now(UTC).isoformat(),
     }
+    if reason_message_id:
+        state["decision"]["reason_message_id"] = reason_message_id
     if choice != "undecided":
         state["events"].append({"name": "USER_MAKES_DECISION", "operation": operation})
     return {"operation": operation}
@@ -53,7 +60,11 @@ def verification_evidence(state: dict, messages: dict) -> list:
     return evidence
 
 
-def evidence_explanation(name, items):
+def evidence_explanation(name, items, choice):
+    if name == "决策合理性" and not items:
+        if choice == "undecided":
+            return "你提前结束了训练，本次没有确认招聘选择。"
+        return "已确认招聘选择，本次缺少能归属于该选择的理由原话。"
     if not items:
         return "本次没有足以评估这一维度的证据。"
     if name != "主动核实":
@@ -77,16 +88,22 @@ def build_report(state: dict) -> dict:
             evidence["风险识别"].append(cited)
         if obs["analyzes"]:
             evidence["证据分析"].append(cited)
-    if decision["reason"] and decision["choice"] != "undecided":
-        evidence["决策合理性"].append({"operation": decision["operation"], "content": decision["reason"]})
+    reason = decision["reason"]
+    if decision["choice"] != "undecided":
+        selected = messages.get(decision.get("reason_message_id"))
+        if selected and selected["sender"] == "user":
+            evidence["决策合理性"].append({**selected, "operation": decision["operation"]})
+            reason = reason or selected["content"]
+        if decision["reason"] and not any(e["content"] == reason for e in evidence["决策合理性"]):
+            evidence["决策合理性"].append({"operation": decision["operation"], "content": reason})
     dimensions = [
         {"name": name, "weight": weight, "score": None, "evidence": evidence[name],
-         "explanation": evidence_explanation(name, evidence[name])}
+         "explanation": evidence_explanation(name, evidence[name], decision["choice"])}
         for name, weight in WEIGHTS.items()
     ]
     return {
         "choice": decision["choice"], "choice_label": CHOICES.get(decision["choice"], "未决定"),
-        "ended_early": decision["choice"] == "undecided", "reason": decision["reason"],
+        "ended_early": decision["choice"] == "undecided", "reason": reason,
         "dimensions": dimensions, "total_score": None, "disclosures": [
             {**d, "visibility": "可查看，展示情况未知"} for d in state.get("disclosures", [])
             if d["excerpt"] in messages[d["message_id"]]["content"]

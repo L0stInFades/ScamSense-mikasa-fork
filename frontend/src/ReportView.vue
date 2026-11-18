@@ -20,6 +20,7 @@ const roleName = (id?: string) => props.roles.find(r => r.id === id)?.name
 function evidenceLabel(e: Evidence) {
   const role = roleName(e.role_id)
   if (!role) return '确认选择时的理由'
+  if (e.id && e.operation) return '确认选择时引用的理由 · 与' + role + '私聊'
   if (e.verification === 'plan') return '核实计划 · 与' + role + '私聊'
   if (e.verification === 'request') return '实际核实请求 · 与' + role + '私聊'
   return '与' + role + '私聊中的原话'
