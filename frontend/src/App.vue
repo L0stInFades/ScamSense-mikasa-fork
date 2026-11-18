@@ -10,6 +10,7 @@ const saved = ref<Saved | null>(null)
 const session = ref<Session | null>(null)
 const selected = ref('')
 const messages = ref<Message[]>([])
+const quote = ref<Message>()
 const error = ref('')
 const historyError = ref('')
 const busy = ref(false)
@@ -69,7 +70,7 @@ async function loadHistory(role: string) {
     if (selected.value === role) historyError.value = '暂时无法读取这段私聊。'
   }
 }
-watch(selected, loadHistory)
+watch(selected, role => { quote.value = undefined; void loadHistory(role) })
 
 async function refresh() {
   const c = saved.value as Credentials
@@ -107,10 +108,13 @@ function restart() {
     </aside>
     <section><p class="label">私聊 · {{ session.stage }}</p>
       <h1>{{ session.roles.find(r => r.id === selected)?.name }}</h1>
-      <p v-for="m in messages" :key="m.id" class="bubble" :class="{ mine: m.sender === 'user' }"><small v-if="m.sender === 'user'">我</small>{{ m.content }}</p>
+      <div v-for="m in messages" :key="m.id" class="bubble" :class="{ mine: m.sender === 'user' }"><small v-if="m.sender === 'user'">我</small>{{ m.content }}
+        <button v-if="m.sender === 'assistant'" type="button" class="cite" :disabled="talking" @click="quote = m">引用</button>
+      </div>
       <p role="alert" v-if="historyError">{{ historyError }} <button @click="loadHistory(selected)">重试</button></p>
       <ChatComposer v-if="saved && 'token' in saved && selected" :key="selected" :credentials="saved"
-        :role="selected" :version="session.state_version" :refresh="refresh" @busy="talking = $event" />
+        :role="selected" :version="session.state_version" :quote="quote" :refresh="refresh"
+        @busy="talking = $event" @clear-quote="quote = undefined" />
       <FinishPanel v-if="saved && 'token' in saved" :credentials="saved" :version="session.state_version"
         :disabled="talking" :refresh="refresh" />
     </section>

@@ -29,6 +29,15 @@ def build_report(state: dict) -> dict:
     evidence = {dimension: [] for dimension in WEIGHTS}
     request_ids = dict.fromkeys(e["message_id"] for e in state["events"] if e["name"] in VERIFY)
     evidence["主动核实"] = [messages[mid] for mid in request_ids if messages[mid]["sender"] == "user"]
+    for obs in state.get("observations", []):
+        user, source = messages[obs["message_id"]], messages[obs["source_id"]]
+        if user["sender"] != "user" or source["sender"] != "assistant" or user["role_id"] != source["role_id"]:
+            continue
+        cited = {**user, "source": source}
+        if obs["clues"]:
+            evidence["风险识别"].append(cited)
+        if obs["analyzes"]:
+            evidence["证据分析"].append(cited)
     if decision["reason"] and decision["choice"] != "undecided":
         evidence["决策合理性"].append({"operation": decision["operation"], "content": decision["reason"]})
     dimensions = [

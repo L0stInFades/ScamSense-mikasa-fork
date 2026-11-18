@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { auth, request, type Credentials, type Role } from './api'
 const props = defineProps<{ credentials: Credentials; status: string; roles: Role[] }>()
 const emit = defineEmits<{ restart: [] }>()
-interface Evidence { message_id?: string; id?: string; operation?: string; role_id?: string; content: string }
+interface Evidence { id?: string; operation?: string; role_id?: string; content: string; source?: {id:string; content:string} }
 interface Report {
   choice_label: string; ended_early: boolean; reason: string; total_score: number | null
   dimensions: {name: string; weight: number; score: number | null; explanation: string; evidence: Evidence[]}[]
@@ -35,10 +35,11 @@ onMounted(() => { if (props.status === 'completed') void load() })
         <p>{{ d.explanation }}</p>
         <blockquote v-for="e in d.evidence" :key="e.id || e.operation">
           <small>{{ roleName(e.role_id) ? '与' + roleName(e.role_id) + '私聊中的原话' : '确认选择时的理由' }}</small>{{ e.content }}
+          <p v-if="e.source"><small>所据的角色原话</small>{{ e.source.content }}</p>
         </blockquote>
       </section>
       <section v-if="report.disclosures.length"><h3>对话中出现的线索</h3>
-        <blockquote v-for="d in report.disclosures" :key="d.message_id"><small>{{ roleName(d.role_id) }} · {{ d.visibility }}</small>{{ d.excerpt }}</blockquote>
+        <blockquote v-for="d in report.disclosures" :key="d.message_id + d.excerpt"><small>{{ roleName(d.role_id) }} · {{ d.visibility }}</small>{{ d.excerpt }}</blockquote>
       </section>
       <button @click="emit('restart')">另开训练</button>
     </template>

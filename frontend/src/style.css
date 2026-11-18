@@ -21,6 +21,7 @@ small { display: block; }
 button[aria-pressed="true"] small { color: #deebe4; }
 .bubble { padding: .85rem 1rem; background: #e9efe5; border-radius: .65rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .bubble.mine { background: #f6edd9; margin-left: 2rem; }
+.cite { display: block; margin-top: .4rem; padding: .1rem .5rem; font-size: .8rem; }
 form { border-top: 1px solid #c8d1c8; margin-top: 1.6rem; }
 form label { font-weight: 650; margin: .9rem 0 .4rem; }
 .finish { margin-top: 1rem; }

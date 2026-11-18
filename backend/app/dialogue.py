@@ -1,6 +1,7 @@
 import re
 from .scenario import message
 from .recruitment import Reply, registration, verify_hr
+from .evidence import record_observation
 
 PRIVATE_DATA = re.compile(r"(?<!\d)(?:1[3-9]\d{9}|\d{15,19}[Xx]?)(?!\d)|[\w.+-]+@[\w.-]+\.\w+|(?:sk-|ghp_|gho_)[\w-]{12,}")
 
@@ -22,10 +23,11 @@ def reply_to(role: str, text: str, history: list[dict]) -> Reply:
     return Reply("你想了解实习岗位的工作内容、技术要求，还是待遇？")
 
 
-def take_turn(state: dict, role: str, text: str) -> dict:
+def take_turn(state: dict, role: str, text: str, source_id: str | None = None) -> dict:
     history = state["chats"][role]
     initial_stage = state["stage"]
     user = message(role, "user", text)
+    record_observation(state, user, history, source_id)
     replies = registration(state, user) if role == "chen_hao" else []
     if role != "wang_yu":
         replies.extend(verify_hr(role, text))

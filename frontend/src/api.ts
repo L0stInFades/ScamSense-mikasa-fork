@@ -20,10 +20,10 @@ export function auth(c: Credentials) {
 }
 
 export async function streamReply(c: Credentials, role: string, content: string, version: number,
-                                  key: string, onText: (text: string) => void) {
+                                  key: string, onText: (text: string) => void, replyTo?: string) {
   const res = await fetch(root + '/sessions/' + c.id + '/messages', {
     method: 'POST', headers: { ...auth(c), 'Content-Type': 'application/json', 'Idempotency-Key': key },
-    body: JSON.stringify({ role_id: role, content, expected_version: version }),
+    body: JSON.stringify({ role_id: role, content, expected_version: version, reply_to: replyTo }),
   })
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || '发送失败，请重试。')
   if (!res.body) throw new Error('未收到回复。')

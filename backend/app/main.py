@@ -106,13 +106,14 @@ class ChatInput(BaseModel):
     role_id: Literal["lin_yue", "chen_hao", "wang_yu"]
     content: str = Field(min_length=1, max_length=2000)
     expected_version: int = Field(ge=0)
+    reply_to: str | None = Field(default=None, pattern="^[a-f0-9]{32}$")
 
 
 @app.post(prefix + "/{session_id}/messages")
 def post_message(body: ChatInput, key: RequestKey, row=Depends(authorized)):
     if PRIVATE_DATA.search(body.content):
         raise HTTPException(422, "请将联系方式、证件或密钥替换为虚构占位内容。")
-    state, sent = apply_action(engine, row, key, body, "chat", lambda state: take_turn(state, body.role_id, body.content))
+    state, sent = apply_action(engine, row, key, body, "chat", lambda state: take_turn(state, body.role_id, body.content, body.reply_to))
     chat = state["chats"][body.role_id]
     by_id = {m["id"]: m for m in chat}
     user, reply = by_id[sent["user_id"]], by_id[sent["reply_id"]]

@@ -9,7 +9,7 @@ from .store import sessions
 
 def apply_action(engine, row, key, body, action, change):
     """Commit the result and its retry receipt together, after checking the session version."""
-    signature = hashlib.sha256((action + body.model_dump_json()).encode()).hexdigest()
+    signature = hashlib.sha256((action + body.model_dump_json(exclude_none=True)).encode()).hexdigest()
 
     def replay(current):
         receipt = current["state"].get("operations", {}).get(str(key))
