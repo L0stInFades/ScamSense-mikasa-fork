@@ -12,12 +12,14 @@ import sqlalchemy as sa
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .scenario import ROLES, opening_state
 from .store import database_url, sessions
+from .actions import apply_action
+from .dialogue import PRIVATE_DATA, take_turn
 
 app = FastAPI(title="拆招 · ScamSense", version="0.1")
 app.add_middleware(
@@ -96,3 +98,30 @@ def get_session(row=Depends(authorized)):
 @app.get(prefix + "/{session_id}/messages")
 def get_messages(role_id: Literal["lin_yue", "chen_hao", "wang_yu"], row=Depends(authorized)):
     return {"items": row["state"]["chats"][role_id]}
+
+
+class ChatInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    role_id: Literal["lin_yue", "chen_hao", "wang_yu"]
+    content: str = Field(min_length=1, max_length=2000)
+    expected_version: int = Field(ge=0)
+
+
+@app.post(prefix + "/{session_id}/messages")
+def post_message(body: ChatInput, key: RequestKey, row=Depends(authorized)):
+    if PRIVATE_DATA.search(body.content):
+        raise HTTPException(422, "请将联系方式、证件或密钥替换为虚构占位内容。")
+    state, sent = apply_action(engine, row, key, body, "chat", lambda state: take_turn(state, body.role_id, body.content))
+    chat = state["chats"][body.role_id]
+    by_id = {m["id"]: m for m in chat}
+    user, reply = by_id[sent["user_id"]], by_id[sent["reply_id"]]
+
+    def frames():
+        def frame(kind, data):
+            return f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        yield frame("start", {"user": user, "reply_id": reply["id"]})
+        for start in range(0, len(reply["content"]), 16):
+            yield frame("delta", {"text": reply["content"][start:start + 16]})
+        yield frame("complete", {"reply_id": reply["id"]})
+
+    return StreamingResponse(frames(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})

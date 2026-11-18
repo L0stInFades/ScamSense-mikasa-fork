@@ -20,5 +20,9 @@ aside button { display: block; text-align: left; width: 100%; margin: .45rem 0; 
 small { display: block; }
 button[aria-pressed="true"] small { color: #deebe4; }
 .bubble { padding: .85rem 1rem; background: #e9efe5; border-radius: .65rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.mine { background: #f6edd9; margin-left: 2rem; }
+form { border-top: 1px solid #c8d1c8; margin-top: 1.6rem; }
+form label { font-weight: 650; margin: .9rem 0 .4rem; }
+textarea { display: block; width: 100%; resize: vertical; border: 1px solid #aebeb4; border-radius: .5rem; margin-bottom: .5rem; padding: .6rem; font: inherit; }
 [role="alert"] { color: #8a3226; }
 @media (max-width: 600px) { .workspace { grid-template-columns: 1fr; } aside button { display: inline-block; width: 32%; } }

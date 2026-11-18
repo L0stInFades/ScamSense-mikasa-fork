@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import ChatComposer from './ChatComposer.vue'
 import { auth, request, type Credentials, type Message, type Saved, type Session } from './api'
 
 const storageKey = 'scamsense.training.v1'
@@ -11,6 +12,7 @@ const error = ref('')
 const historyError = ref('')
 const busy = ref(false)
 const consent = ref(false)
+const talking = ref(false)
 
 function remember(value: Saved) {
   sessionStorage.setItem(storageKey, JSON.stringify(value))
@@ -65,6 +67,14 @@ async function loadHistory(role: string) {
   }
 }
 watch(selected, loadHistory)
+
+async function refresh() {
+  const c = saved.value as Credentials
+  try {
+    session.value = await request<Session>('/sessions/' + c.id, { headers: auth(c) })
+    await loadHistory(selected.value)
+  } catch { historyError.value = '暂时无法核对训练状态，请刷新页面。' }
+}
 </script>
 
 <template>
@@ -82,14 +92,16 @@ watch(selected, loadHistory)
   </main>
   <main v-else class="workspace">
     <aside><p class="label">联系人</p>
-      <button v-for="r in session.roles" :key="r.id" :aria-pressed="selected === r.id" @click="selected = r.id">
+      <button v-for="r in session.roles" :key="r.id" :disabled="talking" :aria-pressed="selected === r.id" @click="selected = r.id">
         <b>{{ r.name }}</b><small>{{ r.public_title }}</small>
       </button>
     </aside>
     <section><p class="label">私聊 · {{ session.stage }}</p>
       <h1>{{ session.roles.find(r => r.id === selected)?.name }}</h1>
-      <p v-for="m in messages" :key="m.id" class="bubble">{{ m.content }}</p>
+      <p v-for="m in messages" :key="m.id" class="bubble" :class="{ mine: m.sender === 'user' }"><small v-if="m.sender === 'user'">我</small>{{ m.content }}</p>
       <p role="alert" v-if="historyError">{{ historyError }} <button @click="loadHistory(selected)">重试</button></p>
+      <ChatComposer v-if="saved && 'token' in saved && selected" :key="selected" :credentials="saved"
+        :role="selected" :version="session.state_version" :refresh="refresh" @busy="talking = $event" />
     </section>
   </main>
 </template>
