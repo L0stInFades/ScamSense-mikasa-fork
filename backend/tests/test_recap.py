@@ -59,3 +59,40 @@ def test_report_can_retry_fixed_exit(client, monkeypatch):
     retry = client.post(path + "/report/retry", headers=headers)
     assert retry.status_code == 200 and retry.json()["ended_early"]
     assert client.get(path, headers=headers).json()["stage"] == "S6"
+
+
+@pytest.mark.parametrize("ask", [False, True])
+def test_concrete_plan_is_distinct_from_a_request_and_answer(client, ask):
+    created = start(client).json()
+    path = "/api/v1/sessions/" + created["session"]["id"]
+    auth = {"Authorization": "Bearer " + created["session_token"]}
+
+    def post(command, **fields):
+        version = client.get(path, headers=auth).json()["state_version"]
+        result = client.post(path + "/" + command, headers={**auth, "Idempotency-Key": str(uuid4())},
+                             json={"expected_version": version, **fields})
+        assert result.status_code == 200
+        return result
+
+    for unrelated in ("王宇打算核实招聘主体。", "我打算不查招聘主体。", "我会向招聘顾问提交资料。", "我以后会查工资。"):
+        post("messages", role_id="lin_yue", content=unrelated)
+    plan = "我打算去官网核对资料收集主体。"
+    post("messages", role_id="chen_hao", content=plan)
+    assert client.get(path, headers=auth).json()["stage"] == "S0"
+    if ask:
+        request = "我会问清谁在收资料，能提供独立核对的官方渠道吗？"
+        post("messages", role_id="chen_hao", content=request)
+    chats = client.get(path + "/messages?role_id=chen_hao", headers=auth).json()["items"]
+    report = post("end").json()
+    verify = next(d for d in report["dimensions"] if d["name"] == "主动核实")
+    items = verify["evidence"]
+    assert items[0]["plans"] == [plan] and items[0]["id"] == chats[1]["id"] and "source" not in items[0]
+    assert [e["verification"] for e in items] == (["plan", "request"] if ask else ["plan"])
+    assert verify["score"] is None and client.get(path + "/report", headers=auth).json() == report
+    if ask:
+        assert items[1]["id"] == chats[-2]["id"] and items[1]["source"] == chats[-1]
+        assert items[1]["plans"] == ["我会问清谁在收资料"]
+        assert {d["clue"] for d in report["disclosures"]} == {"K04"}
+    else:
+        assert "尚未记录实际核实请求" in verify["explanation"]
+        assert report["disclosures"] == []

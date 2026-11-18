@@ -22,12 +22,29 @@ DEFERRED = re.compile(
     r"^(?:我(?:们)?(?:会)?(?:自己)?)?(?:以后|打算|准备|稍后|回头|改天|已经知道|已经了解|知道了)|"
     r"^(?:我)?(?:不是问|不想问|不用介绍|不打算问)"
 )
+PLAN = re.compile(
+    r"^(?:(?:我(?:们)?)?(?:打算|准备|计划|回头|稍后|以后|改天)|我(?:们)?(?:会|要))"
+    r"(?:(?:通过|从|到|上|去|在)(?:学校官网|公司官网|官网|官方渠道)|"
+    r"(?:找|向|跟)(?:王宇|林悦|陈浩|朋友|招聘方|对方)|会|再|先|自己|自行|亲自|去){0,6}"
+    r"(?:核实|核对|验证|确认|查证|查|询问|问)"
+)
+CHECK_TARGET = re.compile(
+    r"招聘(?:主体|方|公司)|收集(?:主体|方)|谁.{0,6}(?:招|收)|资料的?用途|必要性|保存期限|第三方|"
+    r"官方渠道|消息(?:来源|出处)|(?:朋友|王宇).{0,6}亲自核实"
+)
+
+
+def clauses(text: str) -> list[str]:
+    return [part.strip() for part in re.split(r"(?<=[。！？?!；;])|[，,\n]", text) if part.strip()]
+
+
+def is_check_plan(clause: str) -> bool:
+    return bool(PLAN.match(clause) and CHECK_TARGET.search(clause) and not re.search(r"[?？“”「」]", clause))
 
 
 def current_questions(text: str) -> str:
-    clauses = re.split(r"(?<=[。！？?!；;])|[，,\n]", text)
-    return " ".join(clause.strip() for clause in clauses
-                    if REQUEST.search(clause) and not DEFERRED.match(clause.strip()))
+    return " ".join(clause for clause in clauses(text)
+                    if REQUEST.search(clause) and not DEFERRED.match(clause) and not PLAN.match(clause))
 
 
 def field_answers(text: str) -> dict:

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from fastapi import HTTPException
 
+from .recruitment import clauses, is_check_plan
 from .store import sessions
 
 CHOICES = {"continue": "继续提交", "necessary_only": "仅提交必要资料",
@@ -23,12 +24,50 @@ def close_chat(state: dict, operation: str, choice: str, reason: str) -> dict:
     return {"operation": operation}
 
 
+def verification_evidence(state: dict, messages: dict) -> list:
+    requests = {e["message_id"]: e["role_id"] for e in state["events"] if e["name"] in VERIFY}
+    # A committed chat operation identifies both messages, including in older sessions.
+    replies = {}
+    for operation in state.get("operations", {}).values():
+        turn = operation["result"]
+        if "user_id" in turn:
+            replies[turn["user_id"]] = turn["reply_id"]
+    for message in messages.values():
+        if message["sender"] == "user":
+            replies.setdefault(message["id"], None)
+
+    evidence = []
+    for user_id, reply_id in replies.items():
+        user = messages.get(user_id)
+        if not user or user["sender"] != "user":
+            continue
+        plans = [part for part in clauses(user["content"]) if is_check_plan(part)]
+        asked = requests.get(user_id) == user["role_id"]
+        if not (plans or asked):
+            continue
+        item = {**user, "verification": "request" if asked else "plan", "plans": plans}
+        reply = messages.get(reply_id)
+        if asked and reply and reply["sender"] == "assistant" and reply["role_id"] == user["role_id"]:
+            item["source"] = reply
+        evidence.append(item)
+    return evidence
+
+
+def evidence_explanation(name, items):
+    if not items:
+        return "本次没有足以评估这一维度的证据。"
+    if name != "主动核实":
+        return "已有行为证据，数字量表待确认。"
+    if any(item["verification"] == "request" for item in items):
+        return "已记录实际核实请求。独立核实的结果还需另有材料支持，数字量表待确认。"
+    return "已记录核实计划，本次尚未记录实际核实请求。数字量表待确认。"
+
+
 def build_report(state: dict) -> dict:
     messages = {m["id"]: m for chat in state["chats"].values() for m in chat}
     decision = state["decision"]
     evidence = {dimension: [] for dimension in WEIGHTS}
-    request_ids = dict.fromkeys(e["message_id"] for e in state["events"] if e["name"] in VERIFY)
-    evidence["主动核实"] = [messages[mid] for mid in request_ids if messages[mid]["sender"] == "user"]
+    evidence["主动核实"] = verification_evidence(state, messages)
     for obs in state.get("observations", []):
         user, source = messages[obs["message_id"]], messages[obs["source_id"]]
         if user["sender"] != "user" or source["sender"] != "assistant" or user["role_id"] != source["role_id"]:
@@ -42,7 +81,7 @@ def build_report(state: dict) -> dict:
         evidence["决策合理性"].append({"operation": decision["operation"], "content": decision["reason"]})
     dimensions = [
         {"name": name, "weight": weight, "score": None, "evidence": evidence[name],
-         "explanation": "已有行为证据，数字量表待确认。" if evidence[name] else "本次没有足以评估这一维度的证据。"}
+         "explanation": evidence_explanation(name, evidence[name])}
         for name, weight in WEIGHTS.items()
     ]
     return {

@@ -5,7 +5,11 @@ import EvidenceDialog from './EvidenceDialog.vue'
 import { auth, request, type Credentials, type Role } from './api'
 const props = defineProps<{ credentials: Credentials; status: string; roles: Role[] }>()
 const emit = defineEmits<{ restart: [] }>()
-interface Evidence { id?: string; operation?: string; role_id?: string; content: string; source?: {id:string; content:string} }
+interface Evidence {
+  id?: string; operation?: string; role_id?: string; content: string
+  verification?: 'plan' | 'request'; plans?: string[]
+  source?: {id:string; content:string}
+}
 interface Report {
   choice_label: string; ended_early: boolean; reason: string; total_score: number | null
   dimensions: {name: string; weight: number; score: number | null; explanation: string; evidence: Evidence[]}[]
@@ -13,6 +17,13 @@ interface Report {
 }
 const report = ref<Report>(), error = ref(''), loading = ref(false)
 const roleName = (id?: string) => props.roles.find(r => r.id === id)?.name
+function evidenceLabel(e: Evidence) {
+  const role = roleName(e.role_id)
+  if (!role) return '确认选择时的理由'
+  if (e.verification === 'plan') return '核实计划 · 与' + role + '私聊'
+  if (e.verification === 'request') return '实际核实请求 · 与' + role + '私聊'
+  return '与' + role + '私聊中的原话'
+}
 const route = useRoute()
 const sourceLink = (message: string) => ({ name:'evidence', params:{message} })
 const target = computed(() => {
@@ -51,9 +62,10 @@ onMounted(() => { if (props.status === 'completed') void load() })
         <h3>{{ d.name }} · {{ d.weight }}% · {{ d.score ?? '无法评估' }}</h3>
         <p>{{ d.explanation }}</p>
         <blockquote v-for="e in d.evidence" :key="e.id || e.operation">
-          <small>{{ roleName(e.role_id) ? '与' + roleName(e.role_id) + '私聊中的原话' : '确认选择时的理由' }}</small>{{ e.content }}
+          <small>{{ evidenceLabel(e) }}</small>{{ e.content }}
           <RouterLink v-if="e.id && e.role_id" :to="sourceLink(e.id)">查看对话原文</RouterLink>
-          <p v-if="e.source"><small>所据的角色原话</small>{{ e.source.content }} <RouterLink :to="sourceLink(e.source.id)">查看角色原文</RouterLink></p>
+          <p v-if="e.verification === 'request' && e.plans?.length"><small>同条消息中的计划</small>{{ e.plans.join(' ') }}</p>
+          <p v-if="e.source"><small>{{ e.verification === 'request' ? '该请求的角色答复' : '所据的角色原话' }}</small>{{ e.source.content }} <RouterLink :to="sourceLink(e.source.id)">查看角色原文</RouterLink></p>
         </blockquote>
       </section>
       <section v-if="report.disclosures.length"><h3>对话中出现的线索</h3>
