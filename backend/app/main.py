@@ -20,6 +20,7 @@ from .scenario import ROLES, opening_state
 from .store import database_url, sessions
 from .actions import apply_action
 from .dialogue import PRIVATE_DATA, take_turn
+from .recap import close_chat, complete_report
 
 app = FastAPI(title="拆招 · ScamSense", version="0.1")
 app.add_middleware(
@@ -125,3 +126,39 @@ def post_message(body: ChatInput, key: RequestKey, row=Depends(authorized)):
         yield frame("complete", {"reply_id": reply["id"]})
 
     return StreamingResponse(frames(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+
+class EndInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    expected_version: int = Field(ge=0)
+
+
+class DecisionInput(EndInput):
+    choice: Literal["continue", "necessary_only", "verify_first", "decline"]
+    reason: str = Field(default="", max_length=2000)
+
+
+@app.post(prefix + "/{session_id}/decisions")
+def decide(body: DecisionInput, key: RequestKey, row=Depends(authorized)):
+    if PRIVATE_DATA.search(body.reason):
+        raise HTTPException(422, "理由中请使用虚构资料。")
+    apply_action(engine, row, key, body, "decision", lambda s: close_chat(s, str(key), body.choice, body.reason))
+    return complete_report(engine, row["id"])
+
+
+@app.post(prefix + "/{session_id}/end")
+def end_training(body: EndInput, key: RequestKey, row=Depends(authorized)):
+    apply_action(engine, row, key, body, "end", lambda s: close_chat(s, str(key), "undecided", ""))
+    return complete_report(engine, row["id"])
+
+
+@app.get(prefix + "/{session_id}/report")
+def get_report(row=Depends(authorized)):
+    if row["state"]["status"] != "completed":
+        raise HTTPException(409, "复盘还未生成。")
+    return row["state"]["report"]
+
+
+@app.post(prefix + "/{session_id}/report/retry")
+def retry_report(key: RequestKey, row=Depends(authorized)):
+    return complete_report(engine, row["id"])

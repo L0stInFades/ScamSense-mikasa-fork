@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import ChatComposer from './ChatComposer.vue'
+import FinishPanel from './FinishPanel.vue'
+import ReportView from './ReportView.vue'
 import { auth, request, type Credentials, type Message, type Saved, type Session } from './api'
 
 const storageKey = 'scamsense.training.v1'
@@ -56,6 +58,7 @@ onMounted(() => {
 })
 
 async function loadHistory(role: string) {
+  if (!role || !saved.value || !('token' in saved.value)) return
   const c = saved.value as Credentials
   messages.value = []
   historyError.value = ''
@@ -72,8 +75,12 @@ async function refresh() {
   const c = saved.value as Credentials
   try {
     session.value = await request<Session>('/sessions/' + c.id, { headers: auth(c) })
-    await loadHistory(selected.value)
+    if (session.value.status === 'active') await loadHistory(selected.value)
   } catch { historyError.value = '暂时无法核对训练状态，请刷新页面。' }
+}
+function restart() {
+  sessionStorage.removeItem(storageKey)
+  saved.value = null; session.value = null; selected.value = ''; consent.value = false; error.value = ''
 }
 </script>
 
@@ -90,6 +97,8 @@ async function refresh() {
     </button>
     <button v-if="saved && error" :disabled="busy || !consent" @click="enter(true)">另开训练</button>
   </main>
+  <ReportView v-else-if="session.status !== 'active' && saved && 'token' in saved" :credentials="saved"
+    :status="session.status" :roles="session.roles" @restart="restart" />
   <main v-else class="workspace">
     <aside><p class="label">联系人</p>
       <button v-for="r in session.roles" :key="r.id" :disabled="talking" :aria-pressed="selected === r.id" @click="selected = r.id">
@@ -102,6 +111,8 @@ async function refresh() {
       <p role="alert" v-if="historyError">{{ historyError }} <button @click="loadHistory(selected)">重试</button></p>
       <ChatComposer v-if="saved && 'token' in saved && selected" :key="selected" :credentials="saved"
         :role="selected" :version="session.state_version" :refresh="refresh" @busy="talking = $event" />
+      <FinishPanel v-if="saved && 'token' in saved" :credentials="saved" :version="session.state_version"
+        :disabled="talking" :refresh="refresh" />
     </section>
   </main>
 </template>
