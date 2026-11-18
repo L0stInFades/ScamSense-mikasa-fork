@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useRoute, useRouter } from 'vue-router'
+import { useAccess } from './access'
 import ChatComposer from './ChatComposer.vue'
 import FinishPanel from './FinishPanel.vue'
 import ReportView from './ReportView.vue'
-import { auth, request, type Credentials, type Message, type Saved, type Session } from './api'
+import { auth, request, type Credentials, type Message, type Session } from './api'
 
-const storageKey = 'scamsense.training.v1'
-const saved = ref<Saved | null>(null)
+const access = useAccess()
+const { saved } = storeToRefs(access)
+const route = useRoute(), router = useRouter()
 const session = ref<Session | null>(null)
 const selected = ref('')
 const messages = ref<Message[]>([])
@@ -18,9 +22,11 @@ const consent = ref(false)
 const talking = ref(false)
 const modelAvailable = ref(false), shareWithModel = ref(false)
 
-function remember(value: Saved) {
-  sessionStorage.setItem(storageKey, JSON.stringify(value))
-  saved.value = value
+const unavailable = computed(() => route.name !== 'home' && (!saved.value || !('token' in saved.value)))
+function showCurrentPage() {
+  if (!session.value || route.name === 'evidence') return
+  const name = session.value.status === 'active' ? 'training' : 'report'
+  if (route.name !== name) void router.replace({ name })
 }
 
 async function enter(newSession = false) {
@@ -28,7 +34,7 @@ async function enter(newSession = false) {
   busy.value = true
   error.value = ''
   try {
-    if (newSession || !saved.value) remember({ key: crypto.randomUUID(), notice: shareWithModel.value && modelAvailable.value ? 'model-demo-v1' : 'local-demo-v1' })
+    if (newSession || !saved.value) access.remember({ key: crypto.randomUUID(), notice: shareWithModel.value && modelAvailable.value ? 'model-demo-v1' : 'local-demo-v1' })
     const current = saved.value!
     if ('key' in current) {
       const created = await request<{ session: Session; session_token: string }>('/sessions', {
@@ -36,12 +42,13 @@ async function enter(newSession = false) {
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': current.key },
         body: JSON.stringify({ scenario_id: 'internship_v1', privacy_notice_version: current.notice || 'local-demo-v1' }),
       })
-      remember({ id: created.session.id, token: created.session_token })
+      access.remember({ id: created.session.id, token: created.session_token })
       session.value = created.session
     } else {
       session.value = await request<Session>('/sessions/' + current.id, { headers: auth(current) })
     }
     selected.value = session.value.roles[0].id
+    showCurrentPage()
   } catch (e) {
     error.value = e instanceof Error ? e.message : '未能进入训练，请重试。'
   } finally {
@@ -52,7 +59,7 @@ async function enter(newSession = false) {
 onMounted(() => {
   void request<{model_available:boolean}>('/training-options').then(r => { modelAvailable.value = r.model_available }).catch(() => {})
   try {
-    saved.value = JSON.parse(sessionStorage.getItem(storageKey) || 'null')
+    access.restore()
     if (saved.value && 'token' in saved.value) void enter()
     else if (saved.value) error.value = '上次创建结果待确认，可用原请求重试。'
   } catch {
@@ -61,7 +68,7 @@ onMounted(() => {
 })
 
 async function loadHistory(role: string) {
-  if (!role || !saved.value || !('token' in saved.value)) return
+  if (!role || session.value?.status !== 'active' || !saved.value || !('token' in saved.value)) return
   const c = saved.value as Credentials
   messages.value = []
   historyError.value = ''
@@ -78,18 +85,25 @@ async function refresh() {
   const c = saved.value as Credentials
   try {
     session.value = await request<Session>('/sessions/' + c.id, { headers: auth(c) })
+    showCurrentPage()
     if (session.value.status === 'active') await loadHistory(selected.value)
   } catch { historyError.value = '暂时无法核对训练状态，请刷新页面。' }
 }
 function restart() {
-  sessionStorage.removeItem(storageKey)
-  saved.value = null; session.value = null; selected.value = ''; consent.value = false; shareWithModel.value = false; error.value = ''
+  access.clear()
+  session.value = null; selected.value = ''; consent.value = false; shareWithModel.value = false; error.value = ''
+  void router.replace({name:'home'})
 }
+watch(() => route.name, showCurrentPage)
 </script>
 
 <template>
   <header><strong>拆招</strong><span>ScamSense</span></header>
-  <main v-if="!session" class="entry">
+  <main v-if="unavailable" class="entry"><h1>无法恢复这次训练</h1><p>此标签页没有访问原对话的训练凭证。</p>
+    <RouterLink to="/">返回训练入口</RouterLink></main>
+  <main v-else-if="route.name === 'evidence' && session?.status === 'active'" class="entry">
+    <p>该引用不在当前训练的复盘中。</p><RouterLink to="/training">返回当前训练</RouterLink></main>
+  <main v-else-if="!session" class="entry">
     <p class="label">求职反诈模拟训练</p>
     <h1>那个看起来很正规的<br>实习机会</h1>
     <p>你正在寻找 Python 后端实习。两位招聘联系人和一位大学朋友发来了消息。</p>
