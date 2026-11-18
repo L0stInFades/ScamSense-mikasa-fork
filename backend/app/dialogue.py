@@ -3,8 +3,14 @@ from .scenario import message
 from .recruitment import Reply, current_questions, registration, verify_hr
 from .evidence import record_observation
 from .model import compose
+from .speech import own_words, split_relay
 
 PRIVATE_DATA = re.compile(r"(?<!\d)(?:1[3-9]\d{9}|\d{15,19}[Xx]?)(?!\d)|[\w.+-]+@[\w.-]+\.\w+|(?:sk-|ghp_|gho_)[\w-]{12,}")
+RELAY_ACK = {
+    "lin_yue": "你提到的是另一段交流。我可以向你解释我负责的岗位和招聘流程。",
+    "chen_hao": "收到你转述的说法了。你自己想向我核实哪件事？",
+    "wang_yu": "听你这么说，我也会重新想想自己的印象。你转述的情况，我手头没有别的依据。",
+}
 
 
 def reply_to(role: str, text: str, history: list[dict], questions: str) -> Reply:
@@ -40,20 +46,23 @@ def take_turn(state: dict, role: str, text: str, source_id: str | None = None) -
     history = state["chats"][role]
     initial_stage = state["stage"]
     user = message(role, "user", text)
+    direct, relayed = split_relay(text)
+    if relayed:
+        user["own_statement"] = direct
     record_observation(state, user, history, source_id)
-    questions = current_questions(text)
+    questions = current_questions(direct)
     replies = registration(state, user) if role == "chen_hao" else []
     if role != "wang_yu":
         previously_requested = any(e["name"] == "REGISTRATION_REQUESTED" and e.get("role_id") == role
                                    for e in state["events"])
-        replies.extend(verify_hr(role, text, questions, previously_requested))
+        replies.extend(verify_hr(role, direct, questions, previously_requested))
     if not replies:
-        replies = [reply_to(role, text, history, questions)]
+        replies = [Reply(RELAY_ACK[role]) if relayed and not direct else reply_to(role, direct, history, questions)]
     content, mode = compose(role, history, text, [r.text for r in replies], all(r.flexible for r in replies),
                             state.get("notice_version") == "model-demo-v1")
     assistant = {**message(role, "assistant", content), "reply_mode": mode}
-    normalized = text.strip().rstrip("。！？?!")
-    repeated = any(m["sender"] == "user" and m["content"].strip().rstrip("。！？?!") == normalized
+    normalized = direct.strip().rstrip("。！？?!")
+    repeated = any(m["sender"] == "user" and own_words(m).strip().rstrip("。！？?!") == normalized
                    for m in history)
     history.extend((user, assistant))
     for event in dict.fromkeys(r.event for r in replies if r.event):

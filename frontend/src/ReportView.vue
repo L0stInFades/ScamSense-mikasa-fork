@@ -7,7 +7,7 @@ const props = defineProps<{ credentials: Credentials; status: string; roles: Rol
 const emit = defineEmits<{ restart: [] }>()
 interface Evidence {
   id?: string; operation?: string; role_id?: string; content: string
-  verification?: 'plan' | 'request'; plans?: string[]
+  verification?: 'plan' | 'request'; plans?: string[]; own_statement?: string
   source?: {id:string; content:string}
 }
 interface Report {
@@ -63,7 +63,8 @@ onMounted(() => { if (props.status === 'completed') void load() })
         <h3>{{ d.name }} · {{ d.weight }}% · {{ d.score ?? '无法评估' }}</h3>
         <p>{{ d.explanation }}</p>
         <blockquote v-for="e in d.evidence" :key="e.id || e.operation">
-          <small>{{ evidenceLabel(e) }}</small>{{ e.content }}
+          <small>{{ evidenceLabel(e) }}{{ e.own_statement && !e.operation ? ' · 本人发言片段' : '' }}</small>
+          {{ e.operation ? e.content : e.own_statement ?? e.content }}
           <RouterLink v-if="e.id && e.role_id" :to="sourceLink(e.id)">查看对话原文</RouterLink>
           <p v-if="e.verification === 'request' && e.plans?.length"><small>同条消息中的计划</small>{{ e.plans.join(' ') }}</p>
           <p v-if="e.source"><small>{{ e.verification === 'request' ? '该请求的角色答复' : '所据的角色原话' }}</small>{{ e.source.content }} <RouterLink :to="sourceLink(e.source.id)">查看角色原文</RouterLink></p>

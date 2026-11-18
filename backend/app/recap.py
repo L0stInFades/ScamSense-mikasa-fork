@@ -3,8 +3,9 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from fastapi import HTTPException
 
-from .evidence import supported_analysis
-from .recruitment import clauses, is_check_plan
+from .evidence import identified_clues, supported_analysis
+from .recruitment import clauses, current_questions, is_check_plan, verify_hr
+from .speech import own_words
 from .store import sessions
 
 CHOICES = {"continue": "继续提交", "necessary_only": "仅提交必要资料",
@@ -33,7 +34,10 @@ def close_chat(state: dict, operation: str, choice: str, reason: str, reason_mes
 
 
 def verification_evidence(state: dict, messages: dict) -> list:
-    requests = {e["message_id"]: e["role_id"] for e in state["events"] if e["name"] in VERIFY}
+    requests = {}
+    for event in state["events"]:
+        if event["name"] in VERIFY:
+            requests.setdefault((event["message_id"], event["role_id"]), set()).add(event["name"])
     # A committed chat operation identifies both messages, including in older sessions.
     replies = {}
     for operation in state.get("operations", {}).values():
@@ -49,11 +53,20 @@ def verification_evidence(state: dict, messages: dict) -> list:
         user = messages.get(user_id)
         if not user or user["sender"] != "user":
             continue
-        plans = [part for part in clauses(user["content"]) if is_check_plan(part)]
-        asked = requests.get(user_id) == user["role_id"]
+        words = own_words(user)
+        if not words:
+            continue
+        plans = [part for part in clauses(words) if is_check_plan(part)]
+        events = requests.get((user_id, user["role_id"]), set())
+        asked = bool(events)
+        if asked and words != user["content"] and "own_statement" not in user:
+            own_replies = verify_hr(user["role_id"], words, current_questions(words), False) if user["role_id"] != "wang_yu" else []
+            asked = any(reply.event in events for reply in own_replies)
         if not (plans or asked):
             continue
         item = {**user, "verification": "request" if asked else "plan", "plans": plans}
+        if words != user["content"]:
+            item["own_statement"] = words
         reply = messages.get(reply_id)
         if asked and reply and reply["sender"] == "assistant" and reply["role_id"] == user["role_id"]:
             item["source"] = reply
@@ -85,7 +98,10 @@ def build_report(state: dict) -> dict:
         if user["sender"] != "user" or source["sender"] != "assistant" or user["role_id"] != source["role_id"]:
             continue
         cited = {**user, "source": source}
-        if obs["clues"]:
+        words = own_words(user)
+        if words != user["content"]:
+            cited["own_statement"] = words
+        if obs["clues"] and set(obs["clues"]).intersection(identified_clues(state, source, words)):
             evidence["风险识别"].append(cited)
         if obs["analyzes"] and supported_analysis(user, source):
             evidence["证据分析"].append(cited)
@@ -114,6 +130,13 @@ def build_report(state: dict) -> dict:
 
 def checked_report(state: dict) -> dict:
     report = state["report"]
+    affected = {d["name"] for d in report["dimensions"] if d["name"] != "决策合理性"
+                and any("own_statement" not in e and own_words(e) != e["content"] for e in d["evidence"])}
+    if affected:
+        corrected = {d["name"]: d for d in build_report(state)["dimensions"]}
+        report = {**report, "total_score": None, "dimensions": [
+            corrected[d["name"]] if d["name"] in affected else d for d in report["dimensions"]
+        ]}
     analysis = next((d for d in report["dimensions"] if d["name"] == "证据分析"), None)
     if not analysis or not analysis["evidence"]:
         return report

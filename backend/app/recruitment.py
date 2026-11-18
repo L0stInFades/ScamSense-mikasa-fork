@@ -87,7 +87,7 @@ def field_answers(text: str) -> tuple[dict, list]:
 
 
 def registration(state: dict, user: dict) -> list[Reply]:
-    text = user["content"]
+    text = user.get("own_statement", user["content"])
     reg = state.get("registration")
     statements = [c.strip() for c in re.split(r"[，,。；;！!\n]|但是|不过|但", text)]
     interests = [c for c in statements if INTEREST.fullmatch(c)]
