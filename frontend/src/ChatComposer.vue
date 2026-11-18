@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { streamReply, type Credentials, type Message } from './api'
-const props = defineProps<{ credentials: Credentials; role: string; version: number; quote?: Message; refresh: () => Promise<void> }>()
+const props = defineProps<{ credentials: Credentials; role: string; version: number; disabled: boolean; quote?: Message; refresh: () => Promise<void> }>()
 const emit = defineEmits<{ busy: [value: boolean]; clearQuote: [] }>()
 const draft = ref(''), streaming = ref(''), error = ref(''), sending = ref(false)
 let pending: { text: string; key: string; version: number; reference?: string } | undefined
 
 async function send() {
   const text = draft.value.trim()
-  if (!text || sending.value) return
+  if (!text || sending.value || props.disabled) return
   const reference = props.quote?.id
   if (pending?.text !== text || pending.reference !== reference) pending = { text, key: crypto.randomUUID(), version: props.version, reference }
   error.value = ''; streaming.value = ''; sending.value = true; emit('busy', true)
@@ -38,6 +38,6 @@ async function send() {
       :placeholder="role === 'wang_yu' ? '例如：你亲自核实过吗？' : '例如：这个岗位的薪资是多少？'"></textarea>
     <p v-if="streaming" class="bubble" aria-live="polite">{{ streaming }}</p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <button class="primary" :disabled="sending || !draft.trim()">{{ sending ? '正在回复…' : '发送' }}</button>
+    <button class="primary" :disabled="disabled || sending || !draft.trim()">{{ sending ? '正在回复…' : '发送' }}</button>
   </form>
 </template>

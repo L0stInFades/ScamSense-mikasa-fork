@@ -37,7 +37,8 @@ def _commit_action(engine, row, key, body, action, change):
     receipt = replay(row)
     if receipt:
         return row["state"], receipt["result"]
-    if row["state"]["status"] != "active" or body.expected_version != row["version"]:
+    required_status = "paused" if action == "resume" else "active"
+    if row["state"]["status"] != required_status or body.expected_version != row["version"]:
         raise HTTPException(409, "训练已更新，请刷新后重试。")
     state = row["state"]
     result = change(state)

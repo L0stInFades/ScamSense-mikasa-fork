@@ -147,6 +147,25 @@ class DecisionInput(EndInput):
     reason: str = Field(default="", max_length=2000)
 
 
+def change_pause(command, body, key, row):
+    def change(state):
+        state["status"] = "paused" if command == "pause" else "active"
+        return {"status": state["status"], "stage": state["stage"]}
+
+    _, receipt = apply_action(engine, row, key, body, command, change)
+    return {"session": snapshot({**row, "state": receipt, "version": body.expected_version + 1})}
+
+
+@app.post(prefix + "/{session_id}/pause")
+def pause_training(body: EndInput, key: RequestKey, row=Depends(authorized)):
+    return change_pause("pause", body, key, row)
+
+
+@app.post(prefix + "/{session_id}/resume")
+def resume_training(body: EndInput, key: RequestKey, row=Depends(authorized)):
+    return change_pause("resume", body, key, row)
+
+
 @app.post(prefix + "/{session_id}/decisions")
 def decide(body: DecisionInput, key: RequestKey, row=Depends(authorized)):
     if PRIVATE_DATA.search(body.reason):

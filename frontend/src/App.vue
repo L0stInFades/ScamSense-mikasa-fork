@@ -21,11 +21,14 @@ const busy = ref(false)
 const consent = ref(false)
 const talking = ref(false)
 const modelAvailable = ref(false), shareWithModel = ref(false)
+const pauseError = ref('')
+let pauseRequest: { command: string; version: number; key: string } | undefined
 
 const unavailable = computed(() => route.name !== 'home' && (!saved.value || !('token' in saved.value)))
+const finished = computed(() => session.value?.status === 'evaluating' || session.value?.status === 'completed')
 function showCurrentPage() {
   if (!session.value || route.name === 'evidence') return
-  const name = session.value.status === 'active' ? 'training' : 'report'
+  const name = finished.value ? 'report' : 'training'
   if (route.name !== name) void router.replace({ name })
 }
 
@@ -89,8 +92,37 @@ async function refresh() {
     if (session.value.status === 'active') await loadHistory(selected.value)
   } catch { historyError.value = '暂时无法核对训练状态，请刷新页面。' }
 }
+
+async function togglePause() {
+  const current = session.value, credentials = saved.value
+  if (!current || !credentials || !('token' in credentials) || busy.value || talking.value) return
+  const command = current.status === 'paused' ? 'resume' : 'pause'
+  if (pauseRequest?.command !== command || pauseRequest.version !== current.state_version) {
+    pauseRequest = { command, version: current.state_version, key: crypto.randomUUID() }
+  }
+  busy.value = true
+  pauseError.value = ''
+  try {
+    const result = await request<{session: Session}>('/sessions/' + credentials.id + '/' + command, {
+      method: 'POST', headers: { ...auth(credentials), 'Content-Type': 'application/json', 'Idempotency-Key': pauseRequest.key },
+      body: JSON.stringify({expected_version: pauseRequest.version}),
+    })
+    session.value = result.session
+    pauseRequest = undefined
+  } catch (e) {
+    pauseError.value = e instanceof Error ? e.message : '暂时无法核对暂停状态。'
+  } finally {
+    await refresh()
+    if (session.value?.status !== current.status) pauseError.value = ''
+    busy.value = false
+  }
+}
+
 function restart() {
   access.clear()
+  pauseRequest = undefined
+  pauseError.value = ''
+  historyError.value = ''
   session.value = null; selected.value = ''; consent.value = false; shareWithModel.value = false; error.value = ''
   void router.replace({name:'home'})
 }
@@ -101,7 +133,7 @@ watch(() => route.name, showCurrentPage)
   <header><strong>拆招</strong><span>ScamSense</span></header>
   <main v-if="unavailable" class="entry"><h1>无法恢复这次训练</h1><p>此标签页没有访问原对话的训练凭证。</p>
     <RouterLink to="/">返回训练入口</RouterLink></main>
-  <main v-else-if="route.name === 'evidence' && session?.status === 'active'" class="entry">
+  <main v-else-if="route.name === 'evidence' && session && !finished" class="entry">
     <p>该引用不在当前训练的复盘中。</p><RouterLink to="/training">返回当前训练</RouterLink></main>
   <main v-else-if="!session" class="entry">
     <p class="label">求职反诈模拟训练</p>
@@ -115,11 +147,17 @@ watch(() => route.name, showCurrentPage)
     </button>
     <button v-if="saved && error" :disabled="busy || !consent" @click="enter(true)">另开训练</button>
   </main>
-  <ReportView v-else-if="session.status !== 'active' && saved && 'token' in saved" :credentials="saved"
+  <main v-else-if="session.status === 'paused'" class="entry">
+    <h1>训练已暂停</h1>
+    <p>当前阶段 {{ session.stage }}。恢复后可以继续原来的私聊。</p>
+    <p v-if="pauseError || historyError" role="alert">{{ pauseError || historyError }}</p>
+    <button class="primary" :disabled="busy" @click="togglePause">恢复训练</button>
+  </main>
+  <ReportView v-else-if="finished && saved && 'token' in saved" :credentials="saved"
     :status="session.status" :roles="session.roles" @restart="restart" />
   <main v-else class="workspace">
     <aside><p class="label">联系人</p>
-      <button v-for="r in session.roles" :key="r.id" :disabled="talking" :aria-pressed="selected === r.id" @click="selected = r.id">
+      <button v-for="r in session.roles" :key="r.id" :disabled="busy || talking" :aria-pressed="selected === r.id" @click="selected = r.id">
         <b>{{ r.name }}</b><small>{{ r.public_title }}</small>
       </button>
     </aside>
@@ -131,11 +169,13 @@ watch(() => route.name, showCurrentPage)
         <button v-if="m.sender === 'assistant'" type="button" class="cite" :disabled="talking" @click="quote = m">引用</button>
       </div>
       <p role="alert" v-if="historyError">{{ historyError }} <button @click="loadHistory(selected)">重试</button></p>
-      <ChatComposer v-if="saved && 'token' in saved && selected" :key="selected" :credentials="saved"
+      <ChatComposer v-if="saved && 'token' in saved && selected" :key="selected" :disabled="busy" :credentials="saved"
         :role="selected" :version="session.state_version" :quote="quote" :refresh="refresh"
         @busy="talking = $event" @clear-quote="quote = undefined" />
       <FinishPanel v-if="saved && 'token' in saved" :credentials="saved" :version="session.state_version"
-        :disabled="talking" :refresh="refresh" />
+        :disabled="talking || busy" :refresh="refresh" />
+      <p v-if="pauseError" role="alert">{{ pauseError }}</p>
+      <button :disabled="talking || busy" @click="togglePause">暂停训练</button>
     </section>
   </main>
 </template>
