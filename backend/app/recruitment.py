@@ -8,6 +8,7 @@ class Reply:
     event: str | None = None
     clue: str | None = None
     job_question: bool = False
+    flexible: bool = False
 
 
 FIRST_LAYER = ("姓名", "学校", "专业", "毕业时间", "简历", "项目经历")

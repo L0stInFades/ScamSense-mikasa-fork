@@ -16,6 +16,7 @@ const historyError = ref('')
 const busy = ref(false)
 const consent = ref(false)
 const talking = ref(false)
+const modelAvailable = ref(false), shareWithModel = ref(false)
 
 function remember(value: Saved) {
   sessionStorage.setItem(storageKey, JSON.stringify(value))
@@ -27,13 +28,13 @@ async function enter(newSession = false) {
   busy.value = true
   error.value = ''
   try {
-    if (newSession || !saved.value) remember({ key: crypto.randomUUID() })
+    if (newSession || !saved.value) remember({ key: crypto.randomUUID(), notice: shareWithModel.value && modelAvailable.value ? 'model-demo-v1' : 'local-demo-v1' })
     const current = saved.value!
     if ('key' in current) {
       const created = await request<{ session: Session; session_token: string }>('/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Idempotency-Key': current.key },
-        body: JSON.stringify({ scenario_id: 'internship_v1', privacy_notice_version: 'local-demo-v1' }),
+        body: JSON.stringify({ scenario_id: 'internship_v1', privacy_notice_version: current.notice || 'local-demo-v1' }),
       })
       remember({ id: created.session.id, token: created.session_token })
       session.value = created.session
@@ -49,6 +50,7 @@ async function enter(newSession = false) {
 }
 
 onMounted(() => {
+  void request<{model_available:boolean}>('/training-options').then(r => { modelAvailable.value = r.model_available }).catch(() => {})
   try {
     saved.value = JSON.parse(sessionStorage.getItem(storageKey) || 'null')
     if (saved.value && 'token' in saved.value) void enter()
@@ -81,7 +83,7 @@ async function refresh() {
 }
 function restart() {
   sessionStorage.removeItem(storageKey)
-  saved.value = null; session.value = null; selected.value = ''; consent.value = false; error.value = ''
+  saved.value = null; session.value = null; selected.value = ''; consent.value = false; shareWithModel.value = false; error.value = ''
 }
 </script>
 
@@ -92,6 +94,7 @@ function restart() {
     <h1>那个看起来很正规的<br>实习机会</h1>
     <p>你正在寻找 Python 后端实习。两位招聘联系人和一位大学朋友发来了消息。</p>
     <label><input type="checkbox" v-model="consent"> 我会使用虚构资料。本机演示保存训练对话，会话可访问 24 小时。</label>
+    <label v-if="modelAvailable"><input type="checkbox" v-model="shareWithModel" :disabled="!!saved && !error"> 允许本次训练将当前问题和该角色最近的私聊发送给已配置的模型服务组织回复。</label>
     <p role="alert" v-if="error">{{ error }}</p>
     <button class="primary" :disabled="busy || (!consent && !saved)" @click="enter()">
       {{ busy ? '正在进入…' : saved ? '重试本次训练' : '开始训练' }}
@@ -109,6 +112,8 @@ function restart() {
     <section><p class="label">私聊 · {{ session.stage }}</p>
       <h1>{{ session.roles.find(r => r.id === selected)?.name }}</h1>
       <div v-for="m in messages" :key="m.id" class="bubble" :class="{ mine: m.sender === 'user' }"><small v-if="m.sender === 'user'">我</small>{{ m.content }}
+        <small v-if="m.reply_mode === 'fallback'">模型回复不可用，本轮使用剧情预设。</small>
+        <small v-else-if="m.reply_mode === 'model'">模型依据本轮获准材料组织回复</small>
         <button v-if="m.sender === 'assistant'" type="button" class="cite" :disabled="talking" @click="quote = m">引用</button>
       </div>
       <p role="alert" v-if="historyError">{{ historyError }} <button @click="loadHistory(selected)">重试</button></p>

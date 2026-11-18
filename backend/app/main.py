@@ -21,6 +21,7 @@ from .store import database_url, sessions
 from .actions import apply_action
 from .dialogue import PRIVATE_DATA, take_turn
 from .recap import close_chat, complete_report
+from .model import settings as model_settings
 
 app = FastAPI(title="拆招 · ScamSense", version="0.1")
 app.add_middleware(
@@ -37,7 +38,7 @@ RequestKey = Annotated[UUID, Header(alias="Idempotency-Key")]
 class CreateSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_id: Literal["internship_v1"]
-    privacy_notice_version: Literal["local-demo-v1"]
+    privacy_notice_version: Literal["local-demo-v1", "model-demo-v1"]
 
 
 @app.exception_handler(RequestValidationError)
@@ -73,8 +74,15 @@ def authorized(session_id: str, auth: Annotated[HTTPAuthorizationCredentials | N
     return row
 
 
+@app.get("/api/v1/training-options")
+def training_options():
+    return {"model_available": model_settings() is not None}
+
+
 @app.post(prefix, status_code=201)
 def create_session(body: CreateSession, key: RequestKey):
+    if body.privacy_notice_version == "model-demo-v1" and model_settings() is None:
+        raise HTTPException(503, "当前没有可用的模型配置，可另开本地剧情训练。")
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     row = {

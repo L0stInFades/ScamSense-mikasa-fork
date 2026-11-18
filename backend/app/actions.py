@@ -1,4 +1,5 @@
 import hashlib
+import threading
 import time
 
 import sqlalchemy as sa
@@ -6,9 +7,25 @@ from fastapi import HTTPException
 
 from .store import sessions
 
+_active_sessions: set[str] = set()
+_guard = threading.Lock()
+
 
 def apply_action(engine, row, key, body, action, change):
     """Commit the result and its retry receipt together, after checking the session version."""
+    # Single-worker demo: keep an in-flight model turn from being overtaken by an exit.
+    with _guard:
+        if row["id"] in _active_sessions:
+            raise HTTPException(409, "上一项操作还在处理，请稍后重试。")
+        _active_sessions.add(row["id"])
+    try:
+        return _commit_action(engine, row, key, body, action, change)
+    finally:
+        with _guard:
+            _active_sessions.remove(row["id"])
+
+
+def _commit_action(engine, row, key, body, action, change):
     signature = hashlib.sha256((action + body.model_dump_json(exclude_none=True)).encode()).hexdigest()
 
     def replay(current):
