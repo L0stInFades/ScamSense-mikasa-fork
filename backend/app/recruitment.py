@@ -14,6 +14,20 @@ class Reply:
 FIRST_LAYER = ("姓名", "学校", "专业", "毕业时间", "简历", "项目经历")
 INTEREST = re.compile(r"(?:我对(?:你(?:介绍)?的|这个|这份)(?:实习)?(?:岗位|机会|工作)(?:很|挺)?感兴趣|我想申请(?:这个|你介绍的)(?:实习)?岗位)")
 STOP = re.compile(r"(?:整个登记|所有资料|其余资料|剩下的资料|登记资料).{0,6}(?:先不|暂缓|都不|不再)|(?:暂缓|暂停|先不|不再)(?:整个)?(?:登记|提供资料)")
+REQUEST = re.compile(
+    r"[?？]|谁|哪|多久|多长|多少|什么|几个月|是否|能否|能不能|可不可以|怎么|怎样|如何|吗|"
+    r"请(?:问|提供|说明|介绍|给|告知)|给我.{0,16}(?:渠道|依据)|(?:我想|我希望)(?:了解|问|知道)|介绍一下|讲讲|说说"
+)
+DEFERRED = re.compile(
+    r"^(?:我(?:们)?(?:会)?(?:自己)?)?(?:以后|打算|准备|稍后|回头|改天|已经知道|已经了解|知道了)|"
+    r"^(?:我)?(?:不是问|不想问|不用介绍|不打算问)"
+)
+
+
+def current_questions(text: str) -> str:
+    clauses = re.split(r"(?<=[。！？?!；;])|[，,\n]", text)
+    return " ".join(clause.strip() for clause in clauses
+                    if REQUEST.search(clause) and not DEFERRED.match(clause.strip()))
 
 
 def field_answers(text: str) -> dict:
@@ -66,27 +80,29 @@ def registration(state: dict, user: dict) -> list[Reply]:
     return offers
 
 
-def verify_hr(role: str, text: str) -> list[Reply]:
-    if not re.search(r"[?？]|谁|哪|多久|多长|什么|是否|能否|可以.{0,6}吗|怎么|请(?:问|提供|说明)|要.{0,5}渠道", text):
-        return []
-    if re.match(r"(?:我)?(?:以后|打算|准备|稍后|回头)", text.strip()):
-        return []
+def verify_hr(role: str, text: str, questions: str, registration_requested: bool) -> list[Reply]:
     chen = role == "chen_hao"
     answers = []
-    if re.search(r"招聘主体|收集主体|谁.{0,5}(?:招聘|收取|收集|收资料)|顾问.{0,12}关系|(?:招聘|收集)方是谁", text):
+    if re.search(r"招聘主体|收集主体|谁.{0,5}(?:招聘|收取|收集|收资料)|顾问.{0,12}关系|(?:招聘|收集)方是谁", questions):
         answers.append(Reply(
             "我负责对接候选人登记，实际收集资料的主体和顾问之间的关系，我这里没有可供核对的说明。" if chen else "我是本公司的招聘专员，只能介绍我们自己的岗位与招聘流程。",
             "USER_ASKS_RECRUITMENT_IDENTITY", "K01" if chen else None))
-    if re.search(r"用途|必要|用(?:来|于|在|途)|做什么用|收.{0,8}做什么|为什么.{0,12}(?:收|要|填|交)", text):
-        answers.append(Reply(
-            "这些是候选人预登记资料。这一项具体在哪一步需要，我手边没有更详细的说明。" if chen else "就我负责的岗位，简历和项目经历主要用于了解岗位相关的技能和经验。",
-            "USER_ASKS_DATA_USAGE", "K02" if chen else None))
+    if re.search(r"用途|必要|用(?:来|于|在)|(?:有|做)什么用|收.{0,8}做什么|为什么.{0,12}(?:收|要|填|交)", questions):
+        requested_item = any(name in text for name in FIRST_LAYER) or bool(
+            re.search(r"(?:这些|这项|这份)(?:登记)?资料|(?:收|要)它|^(?:请问)?(?:登记资料|资料|用途)", questions)
+        )
+        if chen and registration_requested and requested_item:
+            answers.append(Reply("这些是候选人预登记资料。具体在哪一步需要，我手边没有更详细的说明。",
+                                 "USER_ASKS_DATA_USAGE", "K02"))
+        else:
+            answers.append(Reply("你想了解哪一项？我们可以按具体登记项目逐项讨论用途。" if chen else
+                                 "就我负责的岗位，简历和项目经历主要用于了解岗位相关的技能和经验。", "USER_ASKS_DATA_USAGE"))
     for pattern, topic in [(r"保存|保留|期限", "资料的保存期限"), (r"第三方|转交|接收方|给谁", "资料的第三方处理情况")]:
-        if re.search(pattern, text):
+        if re.search(pattern, questions):
             answers.append(Reply(
                 f"关于{topic}，我目前没有能给你核对的具体说明。" if chen else f"关于{topic}，我需要先核对自己这边的流程。",
                 "USER_ASKS_DATA_USAGE", "K03" if chen else None))
-    if re.search(r"官方.{0,7}(?:渠道|核实|核对|验证)|独立.{0,6}(?:核对|核实|验证|依据)|从官网", text):
+    if re.search(r"官方.{0,7}(?:渠道|核实|核对|验证)|独立.{0,6}(?:核对|核实|验证|依据)|从官网", questions):
         answers.append(Reply(
             "我现在能提供的是我作为顾问的说明，手上没有可供你独立核对的官方依据。" if chen else "当前模拟材料里没有可展示的官方渠道。",
             "USER_REQUESTS_VERIFICATION", "K04" if chen else None))
