@@ -20,7 +20,7 @@ from .scenario import ROLES, opening_state
 from .store import database_url, sessions
 from .actions import apply_action
 from .dialogue import PRIVATE_DATA, take_turn
-from .recap import close_chat, complete_report
+from .recap import checked_report, close_chat, complete_report
 from .model import settings as model_settings
 
 app = FastAPI(title="拆招 · ScamSense", version="0.1")
@@ -186,7 +186,7 @@ def end_training(body: EndInput, key: RequestKey, row=Depends(authorized)):
 def get_report(row=Depends(authorized)):
     if row["state"]["status"] != "completed":
         raise HTTPException(409, "复盘还未生成。")
-    return row["state"]["report"]
+    return checked_report(row["state"])
 
 
 @app.post(prefix + "/{session_id}/report/retry")

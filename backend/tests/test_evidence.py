@@ -1,7 +1,10 @@
 from uuid import uuid4
 
 import pytest
+import sqlalchemy as sa
 
+from app import main
+from app.store import sessions
 from test_entry import client, start
 
 
@@ -67,3 +70,45 @@ def test_decision_can_use_own_earlier_message_as_reason(client, cite, note):
         assert not decision["evidence"] and not report["reason"]
         assert "缺少能归属于该选择的理由原话" in decision["explanation"]
     assert client.post(path + "/decisions", headers=headers, json=body).json() == report
+
+
+def test_analysis_matches_cited_material_in_new_and_saved_reports(client):
+    created = start(client).json()
+    session_id = created["session"]["id"]
+    path = "/api/v1/sessions/" + session_id
+    auth = {"Authorization": "Bearer " + created["session_token"]}
+
+    def history(role):
+        return client.get(path + "/messages", headers=auth, params={"role_id": role}).json()["items"]
+
+    def ask(role, text, source=None):
+        version = client.get(path, headers=auth).json()["state_version"]
+        body = {"role_id": role, "content": text, "expected_version": version, "reply_to": source}
+        assert client.post(path + "/messages", json=body, headers={**auth, "Idempotency-Key": str(uuid4())}).status_code == 200
+
+    lin = history("lin_yue")[0]
+    wang = history("wang_yu")[0]
+    ask("lin_yue", "王宇没有亲自核实，所以群消息不足以证明岗位可靠。", lin["id"])
+    wrong = {**history("lin_yue")[1], "source": lin}
+    ask("wang_yu", "你没有亲自核实，所以群消息不足以证明岗位可靠。", wang["id"])
+    ask("lin_yue", "薪资是多少？")
+    salary = history("lin_yue")[-1]
+    ask("lin_yue", "你说过“已核实过”，只是口头说明，不能证明岗位可靠。", salary["id"])
+    ask("lin_yue", "薪资只是你的口头说明，不能证明岗位可靠。", salary["id"])
+    good = {**history("lin_yue")[-2], "source": salary}
+    headers = {**auth, "Idempotency-Key": str(uuid4())}
+    body = {"expected_version": 5}
+    result = client.post(path + "/end", headers=headers, json=body)
+    assert result.status_code == 200
+    report = result.json()
+    assert report["dimensions"][3]["evidence"] == [good]
+
+    # Simulate a completed report written by the previous rule, keeping the actual dialogue intact.
+    with main.engine.begin() as conn:
+        state = conn.execute(sa.select(sessions.c.state).where(sessions.c.id == session_id)).scalar_one()
+        state["report"]["dimensions"][3]["evidence"].insert(0, wrong)
+        conn.execute(sessions.update().where(sessions.c.id == session_id).values(state=state))
+    assert client.get(path + "/report", headers=auth).json() == report
+    assert client.post(path + "/report/retry", headers=headers).json() == report
+    assert client.post(path + "/end", headers=headers, json=body).json() == report
+    assert history("lin_yue")[1]["content"] == wrong["content"]

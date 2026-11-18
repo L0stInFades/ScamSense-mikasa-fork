@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from fastapi import HTTPException
 
+from .evidence import supported_analysis
 from .recruitment import clauses, is_check_plan
 from .store import sessions
 
@@ -86,7 +87,7 @@ def build_report(state: dict) -> dict:
         cited = {**user, "source": source}
         if obs["clues"]:
             evidence["风险识别"].append(cited)
-        if obs["analyzes"]:
+        if obs["analyzes"] and supported_analysis(user, source):
             evidence["证据分析"].append(cited)
     reason = decision["reason"]
     if decision["choice"] != "undecided":
@@ -111,6 +112,27 @@ def build_report(state: dict) -> dict:
     }
 
 
+def checked_report(state: dict) -> dict:
+    report = state["report"]
+    analysis = next((d for d in report["dimensions"] if d["name"] == "证据分析"), None)
+    if not analysis or not analysis["evidence"]:
+        return report
+    messages = {m["id"]: m for chat in state["chats"].values() for m in chat}
+    verified = []
+    for item in analysis["evidence"]:
+        user = messages.get(item.get("id"))
+        cited = item.get("source") or {}
+        source = messages.get(cited.get("id"))
+        if supported_analysis(user, source):
+            if user["content"] == item["content"] and source["content"] == cited.get("content"):
+                verified.append(item)
+    if len(verified) == len(analysis["evidence"]):
+        return report
+    updated = {**analysis, "evidence": verified, "score": None,
+               "explanation": evidence_explanation("证据分析", verified, report["choice"])}
+    return {**report, "dimensions": [updated if d is analysis else d for d in report["dimensions"]], "total_score": None}
+
+
 def complete_report(engine, session_id: str):
     # The S5 commit already closed the conversation. Retrying uses that same evidence.
     with engine.begin() as conn:
@@ -119,7 +141,7 @@ def complete_report(engine, session_id: str):
             raise HTTPException(410, "训练已过期")
         state = row["state"]
         if state["status"] == "completed":
-            return state["report"]
+            return checked_report(state)
         if state["status"] != "evaluating":
             raise HTTPException(409, "请先确认招聘选择或提前结束训练。")
         try:
@@ -135,5 +157,5 @@ def complete_report(engine, session_id: str):
             other = conn.execute(sa.select(sessions.c.state).where(sessions.c.id == session_id)).scalar_one()
             if other["status"] != "completed":
                 raise HTTPException(409, "训练状态已更新，请重试。")
-            return other["report"]
+            return checked_report(other)
         return report
