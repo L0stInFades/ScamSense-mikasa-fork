@@ -1,17 +1,8 @@
 import re
-from dataclasses import dataclass
-
 from .scenario import message
+from .recruitment import Reply, registration, verify_hr
 
 PRIVATE_DATA = re.compile(r"(?<!\d)(?:1[3-9]\d{9}|\d{15,19}[Xx]?)(?!\d)|[\w.+-]+@[\w.-]+\.\w+|(?:sk-|ghp_|gho_)[\w-]{12,}")
-
-
-@dataclass(frozen=True)
-class Reply:
-    text: str
-    event: str | None = None
-    clue: str | None = None
-    job_question: bool = False
 
 
 def reply_to(role: str, text: str, history: list[dict]) -> Reply:
@@ -33,16 +24,27 @@ def reply_to(role: str, text: str, history: list[dict]) -> Reply:
 
 def take_turn(state: dict, role: str, text: str) -> dict:
     history = state["chats"][role]
-    reply = reply_to(role, text, history)
+    initial_stage = state["stage"]
     user = message(role, "user", text)
-    assistant = message(role, "assistant", reply.text)
+    replies = registration(state, user) if role == "chen_hao" else []
+    if role != "wang_yu":
+        replies.extend(verify_hr(role, text))
+    if not replies:
+        replies = [reply_to(role, text, history)]
+    assistant = message(role, "assistant", "\n".join(r.text for r in replies))
     history.extend((user, assistant))
-    if reply.event:
-        state["events"].append({"name": reply.event, "message_id": user["id"], "role_id": role})
-    if reply.clue:
-        state.setdefault("disclosures", []).append({
-            "clue": reply.clue, "message_id": assistant["id"], "role_id": role, "excerpt": reply.text,
-        })
-    if state["stage"] == "S0" and reply.job_question:
+    for event in dict.fromkeys(r.event for r in replies if r.event):
+        source = assistant if event == "REGISTRATION_REQUESTED" else user
+        state["events"].append({"name": event, "message_id": source["id"], "role_id": role})
+    for reply in replies:
+        if reply.clue:
+            state.setdefault("disclosures", []).append({
+                "clue": reply.clue, "message_id": assistant["id"], "role_id": role, "excerpt": reply.text,
+            })
+    if initial_stage == "S3" and any(r.event and r.event != "REGISTRATION_REQUESTED" for r in replies):
+        state["stage"] = "S4"
+    elif initial_stage == "S2" and any(r.clue for r in replies):
+        state["stage"] = "S3"
+    elif state["stage"] == "S0" and any(r.job_question for r in replies):
         state["stage"] = "S1"
     return {"role_id": role, "user_id": user["id"], "reply_id": assistant["id"]}
